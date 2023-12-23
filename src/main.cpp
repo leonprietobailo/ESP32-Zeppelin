@@ -1,108 +1,49 @@
-#include <Arduino.h>
-#include <Wire.h>
 
-// IMU VARIABLES
-int16_t b_acc_x, b_acc_y, b_acc_z, b_gyro_x, b_gyro_y, b_gyro_z, b_mag_x, b_mag_y, b_mag_z;
-float acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z;
-float acc_resolution = 2048; // 2048 bits / g.
+#include <MPU6500_WE.h>
+#include <Wire.h>
+#define MPU6500_ADDR 0x68
+
+MPU6500_WE myMPU6500 = MPU6500_WE(MPU6500_ADDR);
+uint64_t executionTime;
 
 void setup()
 {
-  Serial.begin(9600);
-
-  callibrateImu();
+  Serial.begin(115200);
+  Wire.begin();
+  if (!myMPU6500.init())
+  {
+    Serial.println("MPU6500 does not respond");
+  }
+  else
+  {
+    Serial.println("MPU6500 is connected");
+  }
+  Serial.println("Position you MPU6500 flat and don't move it - calibrating...");
+  delay(1000);
+  myMPU6500.autoOffsets();
+  Serial.println("Done!");
+  myMPU6500.enableGyrDLPF();
+  myMPU6500.setGyrDLPF(MPU6500_DLPF_6);
+  myMPU6500.setSampleRateDivider(5);
+  myMPU6500.setGyrRange(MPU6500_GYRO_RANGE_250);
+  myMPU6500.setAccRange(MPU6500_ACC_RANGE_2G);
+  myMPU6500.enableAccDLPF(true);
+  myMPU6500.setAccDLPF(MPU6500_DLPF_6);
+  delay(200);
 }
 
 void loop()
 {
-  readImu();
-  printData();
-}
+  xyzFloat gValue = myMPU6500.getGValues();
+  xyzFloat gyr = myMPU6500.getGyrValues();
+  float resultantG = myMPU6500.getResultantG(gValue);
 
-float acc_x_cal, acc_y_cal, acc_z_cal, gyro_x_cal, gyro_y_cal, gyro_z_cal, mag_x_cal, mag_y_cal, mag_z_cal;
-bool imuCallibrated = false;
-
-void callibrateImu()
-{
-  for (u_int8_t i = 0; i < 4000; i++)
+  if (micros() - executionTime > 4000)
   {
-    readImu();
-
-    acc_x_cal += acc_x / 4000;
-    acc_y_cal += acc_y / 4000;
-    acc_z_cal += acc_z / 4000;
-
-    gyro_x_cal += gyro_x / 4000;
-    gyro_y_cal += gyro_y / 4000;
-    gyro_z_cal += gyro_z / 4000;
-
-    mag_x_cal += mag_x / 4000;
-    mag_y_cal += mag_y / 4000;
-    mag_z_cal += mag_z / 4000;
+    Serial.println("WARNING: Long loop. PIDs may get unstable.");
   }
-  imuCallibrated = true;
-}
-
-void readImu()
-{
-  Wire.begin();
-  Wire.beginTransmission(0x68);
-  Wire.write(0x3B);
-  Wire.endTransmission();
-  Wire.requestFrom(0x68, 6);
-  b_acc_x = Wire.read() << 8 | Wire.read();
-  b_acc_y = Wire.read() << 8 | Wire.read();
-  b_acc_z = Wire.read() << 8 | Wire.read();
-
-  Wire.beginTransmission(0x68);
-  Wire.write(0x43);
-  Wire.endTransmission();
-  Wire.requestFrom(0x68, 6);
-  b_gyro_x = Wire.read() << 8 | Wire.read();
-  b_gyro_y = Wire.read() << 8 | Wire.read();
-  b_gyro_z = Wire.read() << 8 | Wire.read();
-
-  Wire.beginTransmission(0x68);
-  Wire.write(0x3B);
-  Wire.endTransmission();
-  Wire.requestFrom(0x68, 6);
-  b_mag_x = Wire.read() << 8 | Wire.read();
-  b_mag_y = Wire.read() << 8 | Wire.read();
-  b_mag_z = Wire.read() << 8 | Wire.read();
-
-  acc_x = b_acc_x / acc_resolution;
-  acc_y = b_acc_y / acc_resolution;
-  acc_z = b_acc_z / acc_resolution;
-
-  gyro_x = b_gyro_x / acc_resolution;
-  gyro_y = b_gyro_y / acc_resolution;
-  gyro_z = b_gyro_z / acc_resolution;
-
-  mag_x = b_mag_x / acc_resolution;
-  mag_y = b_mag_y / acc_resolution;
-  mag_z = b_mag_z / acc_resolution;
-}
-
-void printData()
-{
-  Serial.print("ACC_X: ");
-  Serial.print(acc_x);
-  Serial.print("\tACC_Y: ");
-  Serial.print(acc_y);
-  Serial.print("\tACC_Z: ");
-  Serial.print(acc_z);
-
-  Serial.print("\tGYRO_X: ");
-  Serial.print(gyro_x);
-  Serial.print("\tGYRO_Y: ");
-  Serial.print(gyro_y);
-  Serial.print("\tGYRO_Z: ");
-  Serial.print(gyro_z);
-
-  Serial.print("\tMAG_X: ");
-  Serial.print(mag_x);
-  Serial.print("\tMAG_Y: ");
-  Serial.print(mag_y);
-  Serial.print("\tMAG_Z: ");
-  Serial.println(mag_z);
+  while (micros() - executionTime < 4000)
+  {
+  }
+  executionTime = micros();
 }

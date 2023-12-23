@@ -11,10 +11,9 @@ def send_command(cmd):
     except Exception as e:
         print(f"Error: {e}")
 
-
-input = "";
 esp_ip = '192.168.1.149'
-while input != 0:
+user_choice = 5  # Changed variable name
+while user_choice != 0:
     print("*****************************")
     print("Select command: ")
     print("1 - Do Command 1")
@@ -23,19 +22,21 @@ while input != 0:
     print("4 - Do Command 4")
     print("5 - Do Command 5")
     print("0 - Exit.")
-
-    input = input();
+    print("*****************************")
+    user_choice = int(input())  # Now it should work correctly
     
-    match input:
-        case "1":
+    match user_choice:
+        case 1:
             send_command("CMD1")
-        case "2":
+        case 2:
             send_command("CMD2")
-        case "3":
+        case 3:
             send_command("CMD3")
-        case "4":
+        case 4:
             send_command("CMD4")
-        case "5":
+        case 5:
             send_command("CMD5")
-        case "0":
-            print("Exitting...")
+        case 0:
+            print("Exiting...")
+
+user_choice = 0  # Reset the variable if needed

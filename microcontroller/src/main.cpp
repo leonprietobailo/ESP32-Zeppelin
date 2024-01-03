@@ -3,7 +3,8 @@
 #include <MPU6500_WE.h>
 #include <esp_task_wdt.h>
 #include <QMC5883LCompass.h>
-// #include <Fusion.h>
+#include <Fusion.h>
+#include <soc/rtc_wdt.h>
 
 #define SAMPLE_RATE = 100.0; // Hz
 uint64_t startGyro;
@@ -18,8 +19,8 @@ uint64_t executionTime;
 xyzFloat acc, vel, pos, g, gyro;
 
 // WiFi connection.
-const char *ssid = "POCO X3 NFC";
-const char *password = "omegaisugly";
+const char *ssid = "XTA.CAT-7E5AA4";
+const char *password = "ZqqKpgwn";
 WiFiServer server(80);
 
 // Function declarations
@@ -39,27 +40,29 @@ enum FlightMode
 
 FlightMode FLIGHT_MODE = FM_DISABLED;
 
-// const FusionMatrix gyroscopeMisalignment = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
-// const FusionVector gyroscopeSensitivity = {1.0f, 1.0f, 1.0f};
-// const FusionVector gyroscopeOffset = {0.0f, 0.0f, 0.0f};
-// const FusionMatrix accelerometerMisalignment = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
-// const FusionVector accelerometerSensitivity = {1.0f, 1.0f, 1.0f};
-// const FusionVector accelerometerOffset = {0.0f, 0.0f, 0.0f};
-// const FusionMatrix softIronMatrix = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
-// const FusionVector hardIronOffset = {0.0f, 0.0f, 0.0f};
+const FusionMatrix gyroscopeMisalignment = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+const FusionVector gyroscopeSensitivity = {1.0f, 1.0f, 1.0f};
+const FusionVector gyroscopeOffset = {0.0f, 0.0f, 0.0f};
+const FusionMatrix accelerometerMisalignment = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+const FusionVector accelerometerSensitivity = {1.0f, 1.0f, 1.0f};
+const FusionVector accelerometerOffset = {0.0f, 0.0f, 0.0f};
+const FusionMatrix softIronMatrix = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+const FusionVector hardIronOffset = {0.0f, 0.0f, 0.0f};
 
-// // Initialise algorithms
-// FusionOffset offset;
-// FusionAhrs ahrs;
+// Initialise algorithms
+FusionOffset offset;
+FusionAhrs ahrs;
 
-// const FusionAhrsSettings settings = {
-//     .convention = FusionConventionNwu,
-//     .gain = 0.5f,
-//     .gyroscopeRange = 2000.0f, /* replace this with actual gyroscope range in degrees/s */
-//     .accelerationRejection = 10.0f,
-//     .magneticRejection = 10.0f,
-//     .recoveryTriggerPeriod = 5 * 250, /* 5 seconds */
-// };
+const FusionAhrsSettings settings = {
+    .convention = FusionConventionNwu,
+    .gain = 0.5f,
+    .gyroscopeRange = 2000.0f, /* replace this with actual gyroscope range in degrees/s */
+    .accelerationRejection = 10.0f,
+    .magneticRejection = 10.0f,
+    .recoveryTriggerPeriod = 5 * 250, /* 5 seconds */
+};
+
+xyzFloat gyroReads;
 
 void setup()
 {
@@ -67,6 +70,8 @@ void setup()
   // Disable WDT.
   disableCore0WDT();
   disableCore1WDT();
+  rtc_wdt_protect_off();
+  rtc_wdt_disable();
 
   // Serial com.
   Serial.begin(115200);
@@ -133,11 +138,19 @@ void setup()
   myMPU6500.setAccDLPF(MPU6500_DLPF_6);
   delay(200);
 
-  // FusionOffsetInitialise(&offset, 100);
-  // FusionAhrsInitialise(&ahrs);
-  // FusionAhrsSetSettings(&ahrs, &settings);
+  FusionOffsetInitialise(&offset, 100);
+  FusionAhrsInitialise(&ahrs);
+  FusionAhrsSetSettings(&ahrs, &settings);
 
   startGyro = micros();
+
+  for (int i = 0; i < 4000; i++)
+  {
+    gyroReads += myMPU6500.getGyrRawValues() / 131 / 4000;
+  }
+  Serial.println("Gyro Meas");
+  Serial.println(myMPU6500.getGyrRawValues().x / 131);
+  Serial.println(gyroReads.x);
 }
 
 void loop()
@@ -146,19 +159,19 @@ void loop()
   Controllers();
   Actuators();
   // Diagnostics();
-  Serial.println(micros() - executionTime);
-  if (micros() - executionTime > 1.0 / 100)
+  // Serial.println(micros() - executionTime);
+  if (micros() - executionTime > 1e4)
   {
     Serial.println("WARNING: Long loop. PIDs may get unstable. " + micros() - executionTime);
   }
-  while (micros() - executionTime < 1 / 100)
+  while (micros() - executionTime < 1e4)
   {
   }
   executionTime = micros();
 }
 int n = 0;
 xyzFloat g_avg;
-
+float vel_x, vel_y, vel_z, pos_x, pos_y, pos_z, roll, pitch, yaw;
 void ReadUnits()
 {
   // HMC5883 READOUTS
@@ -171,33 +184,40 @@ void ReadUnits()
   g.x = g.x * 0.95 + g_read.x * 0.05;
   g.y = g.y * 0.95 + g_read.y * 0.05;
   g.z = g.z * 0.95 + g_read.z * 0.05;
-  gyro = myMPU6500.getGyrValues();
+  gyro = myMPU6500.getGyrValues(); // / 131 - gyroReads;
 
   // Velocity
   // vel += g * 9.81 * 4000e-6;
   // pos += vel * 4000e-6;
 
-  // const clock_t timestamp = (micros() - startGyro) / 1e6;
-  // FusionVector gyroscope = {gyro.x, gyro.y, gyro.z};
-  // FusionVector accelerometer = {g_read.x, g_read.y, g_read.z};
+  const clock_t timestamp = clock();
+  FusionVector gyroscope = {gyro.x, gyro.y, gyro.z};
+  FusionVector accelerometer = {g_read.x, g_read.y, g_read.z};
 
-  // gyroscope = FusionCalibrationInertial(gyroscope, gyroscopeMisalignment, gyroscopeSensitivity, gyroscopeOffset);
-  // accelerometer = FusionCalibrationInertial(accelerometer, accelerometerMisalignment, accelerometerSensitivity, accelerometerOffset);
+  gyroscope = FusionCalibrationInertial(gyroscope, gyroscopeMisalignment, gyroscopeSensitivity, gyroscopeOffset);
+  accelerometer = FusionCalibrationInertial(accelerometer, accelerometerMisalignment, accelerometerSensitivity, accelerometerOffset);
 
-  // gyroscope = FusionOffsetUpdate(&offset, gyroscope);
+  gyroscope = FusionOffsetUpdate(&offset, gyroscope);
 
-  // static clock_t previousTimestamp;
-  // const float deltaTime = (float)(timestamp - previousTimestamp) / (float)CLOCKS_PER_SEC;
-  // previousTimestamp = timestamp;
+  static clock_t previousTimestamp;
+  const float deltaTime = (float)(timestamp - previousTimestamp) / (float)CLOCKS_PER_SEC;
+  previousTimestamp = timestamp;
 
-  // FusionAhrsUpdateNoMagnetometer(&ahrs, gyroscope, accelerometer, deltaTime);
+  FusionAhrsUpdateNoMagnetometer(&ahrs, gyroscope, accelerometer, deltaTime);
 
-  // const FusionEuler euler = FusionQuaternionToEuler(FusionAhrsGetQuaternion(&ahrs));
-  // const FusionVector earth = FusionAhrsGetEarthAcceleration(&ahrs);
+  const FusionEuler euler = FusionQuaternionToEuler(FusionAhrsGetQuaternion(&ahrs));
+  const FusionVector earth = FusionAhrsGetEarthAcceleration(&ahrs);
 
   // Serial.printf("Roll %0.1f, Pitch %0.1f, Yaw %0.1f, X %0.1f, Y %0.1f, Z %0.1f\n",
   //               euler.angle.roll, euler.angle.pitch, euler.angle.yaw,
   //               earth.axis.x, earth.axis.y, earth.axis.z);
+  roll = euler.angle.roll;
+  pitch = euler.angle.pitch;
+  yaw = euler.angle.yaw;
+
+  vel_x += earth.axis.x * deltaTime;
+  pos_x += vel_x * deltaTime + 0.5 * earth.axis.x * deltaTime * deltaTime;
+  // Serial.println(pos_x);
 
   // if (n == 10)
   // {
@@ -298,47 +318,67 @@ void TaskServer(void *pvParameters)
     if (client)
     {
       Serial.println("New Client.");
+
       // Wait until the client sends some data
       while (!client.available())
       {
         delay(1);
       }
 
-      // Read the first line of the request
-      String request = client.readStringUntil('\r');
-      Serial.println(request);
-      client.flush();
+      // Check if the client is still connected
+      if (client.connected())
+      {
+        // Read the first line of the request
+        String request = client.readStringUntil('\r');
+        Serial.println(request);
 
-      // Match the request
-      if (request.indexOf("/CMD1") != -1)
-      {
-        Serial.println("Received unassigned CMD1");
-      }
-      else if (request.indexOf("/CMD2") != -1)
-      {
-        Serial.println("Received unassigned CMD2");
-      }
-      else if (request.indexOf("/CMD3") != -1)
-      {
-        Serial.println("Received unassigned CMD3");
-      }
-      else if (request.indexOf("/CMD4") != -1)
-      {
-        Serial.println("Received unassigned CMD4");
-      }
-      else if (request.indexOf("/CMD5") != -1)
-      {
-        Serial.println("Received unassigned CMD5");
-      }
+        // Start of the response
+        client.println("HTTP/1.1 200 OK");
+        client.println("Content-type:text/html");
+        client.println();
 
-      client.println("HTTP/1.1 200 OK");
-      client.println("Content-type:text/html");
-      client.println();
-      client.println("Command received");
-      client.println();
+        // Match the request and send a response
+        if (request.indexOf("/CMD1") != -1)
+        {
+          Serial.println("Received CMD1");
+          client.println("<html><body><h1>Response for CMD1</h1></body></html>");
+        }
+        else if (request.indexOf("/CMD2") != -1)
+        {
+          Serial.println("Received CMD2");
+          client.println("<html><body><h1>Response for CMD2</h1></body></html>");
+        }
+        else if (request.indexOf("/CMD3") != -1)
+        {
+          Serial.println("Received CMD3");
+          client.println("<html><body><h1>Response for CMD3</h1></body></html>");
+        }
+        else if (request.indexOf("/CMD4") != -1)
+        {
+          Serial.println("Received CMD4");
+          client.println("<html><body><h1>Response for CMD4</h1></body></html>");
+        }
+        else if (request.indexOf("/CMD5") != -1)
+        {
+          Serial.println("Received CMD5");
+          client.printf("%0.1f,%0.1f,%0.1f", roll, pitch, yaw);
+        }
+        else
+        {
+          client.println("Unknown Command");
+        }
 
-      client.stop();
-      Serial.println("Client disconnected");
+        client.println(); // End of the response
+
+        // Flush and stop client after sending the response
+        client.flush();
+        client.stop();
+        Serial.println("Client disconnected");
+      }
+      else
+      {
+        Serial.println("Client disconnected before request could be read.");
+      }
     }
   }
 }

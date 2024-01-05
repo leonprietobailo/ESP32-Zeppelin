@@ -5,6 +5,7 @@
 #include <QMC5883LCompass.h>
 #include <Fusion.h>
 #include <soc/rtc_wdt.h>
+#include <PID_v1.h>
 
 #define SAMPLE_RATE = 100.0; // Hz
 uint64_t startGyro;
@@ -18,6 +19,23 @@ MPU6500_WE myMPU6500 = MPU6500_WE(MPU6500_ADDR);
 uint64_t executionTime;
 xyzFloat acc, vel, pos, g, gyro;
 
+// Define the GPIO pins for the PWM signals
+const int pwmPin1 = 0; // G0: Left
+const int pwmPin2 = 4; // G4: Right
+
+// Define PWM channel, frequency, and resolution
+const int pwmChannel1 = 0;
+const int pwmChannel2 = 1;
+const int freq = 1000;    // Frequency in Hz
+const int resolution = 8; // Resolution in bits (8 bits -> 0-255 value range)
+
+// PID Initialization
+double Setpoint, Input, Output;
+double Kp = 1, Ki = 0.1, Kd = 0.05;
+float pid_out_left, pid_out_right;
+
+PID myPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
+
 // WiFi connection.
 const char *ssid = "XTA.CAT-7E5AA4";
 const char *password = "ZqqKpgwn";
@@ -29,6 +47,7 @@ void ReadUnits();
 void Controllers();
 void Actuators();
 void Diagnostics();
+double unwrap(double previousAngle, double newAngle);
 
 enum FlightMode
 {
@@ -53,6 +72,12 @@ const FusionVector hardIronOffset = {0.0f, 0.0f, 0.0f};
 FusionOffset offset;
 FusionAhrs ahrs;
 
+// Misc
+int n = 0;
+xyzFloat g_avg;
+float vel_x, vel_y, vel_z, pos_x, pos_y, pos_z, roll, pitch;
+double yaw;
+
 const FusionAhrsSettings settings = {
     .convention = FusionConventionNwu,
     .gain = 0.5f,
@@ -66,6 +91,18 @@ xyzFloat gyroReads;
 
 void setup()
 {
+  // PWMs
+  ledcSetup(pwmChannel1, freq, resolution);
+  ledcSetup(pwmChannel2, freq, resolution);
+  ledcAttachPin(pwmPin1, pwmChannel1);
+  ledcAttachPin(pwmPin2, pwmChannel2);
+
+  // PIDs
+  myPID.SetMode(AUTOMATIC);
+  myPID.SetOutputLimits(-60, 60);
+  Setpoint = 0;
+  Input = 0;
+
   Wire.begin();
   // Disable WDT.
   disableCore0WDT();
@@ -169,9 +206,7 @@ void loop()
   }
   executionTime = micros();
 }
-int n = 0;
-xyzFloat g_avg;
-float vel_x, vel_y, vel_z, pos_x, pos_y, pos_z, roll, pitch, yaw;
+
 void ReadUnits()
 {
   // HMC5883 READOUTS
@@ -213,7 +248,7 @@ void ReadUnits()
   //               earth.axis.x, earth.axis.y, earth.axis.z);
   roll = euler.angle.roll;
   pitch = euler.angle.pitch;
-  yaw = euler.angle.yaw;
+  yaw = unwrap(yaw, euler.angle.yaw);
 
   vel_x += earth.axis.x * deltaTime;
   pos_x += vel_x * deltaTime + 0.5 * earth.axis.x * deltaTime * deltaTime;
@@ -252,21 +287,46 @@ void ReadUnits()
   // Serial.print("z: ");
   // Serial.println(pos.z);
 }
+
 void Controllers()
 {
-  // INCLUDE PID CONTROLLERS CODE.
+  Input = yaw;
+  Setpoint = 0;
+  bool result = myPID.Compute();
+
+  double outputCapped = Output / 3.0;
+
+  // Serial.printf("Input: %f    Setpoint: %f    Output: %f    Yaw: %f    Boolean: %d", Input, Setpoint, outputCapped, yaw, result);
+  // Serial.println();
 }
+float rightMotor, leftMotor;
+
 void Actuators()
 {
   switch (FLIGHT_MODE)
   {
   case FM_DISABLED:
-    /* code */
-    break;
+  {
+    rightMotor = 0;
+    leftMotor = 0;
+  }
+  break;
 
   case FM_DEFAULT:
-    /* code */
-    break;
+  {
+    float throttle = 10;
+    rightMotor = throttle + Output;
+    leftMotor = throttle - Output;
+    if (rightMotor < 0)
+    {
+      rightMotor = 0;
+    }
+    if (leftMotor < 0)
+    {
+      leftMotor = 0;
+    }
+  }
+  break;
 
   case FM_DEAD_RECKONING:
     /* code */
@@ -279,6 +339,13 @@ void Actuators()
   default:
     break;
   }
+
+  ledcWrite(pwmChannel1, leftMotor * 2.55);
+  ledcWrite(pwmChannel2, rightMotor * 2.55);
+
+  Serial.printf("Left Motor: %f    Right Motor: %f Map1: %f Map2: %f", leftMotor, rightMotor, leftMotor / 2.55, rightMotor / 2.55);
+
+  Serial.println();
 }
 void Diagnostics()
 {
@@ -340,17 +407,18 @@ void TaskServer(void *pvParameters)
         // Match the request and send a response
         if (request.indexOf("/CMD1") != -1)
         {
-          Serial.println("Received CMD1");
-          client.println("<html><body><h1>Response for CMD1</h1></body></html>");
+          FLIGHT_MODE = FM_DISABLED;
+          client.println("Switched to: \"FM_DISABLED\"");
         }
         else if (request.indexOf("/CMD2") != -1)
         {
-          Serial.println("Received CMD2");
-          client.println("<html><body><h1>Response for CMD2</h1></body></html>");
+          FLIGHT_MODE = FM_DEFAULT;
+          client.println("Switched to: \"FM_DEFAULT\"");
         }
         else if (request.indexOf("/CMD3") != -1)
         {
-          Serial.println("Received CMD3");
+          ledcWrite(pwmChannel1, 255);
+          ledcWrite(pwmChannel2, 255);
           client.println("<html><body><h1>Response for CMD3</h1></body></html>");
         }
         else if (request.indexOf("/CMD4") != -1)
@@ -381,4 +449,14 @@ void TaskServer(void *pvParameters)
       }
     }
   }
+}
+
+double unwrap(double previousAngle, double newAngle)
+{
+  double delta = newAngle - previousAngle;
+  if (delta > 180)
+    delta -= 360;
+  else if (delta < -180)
+    delta += 360;
+  return previousAngle + delta;
 }

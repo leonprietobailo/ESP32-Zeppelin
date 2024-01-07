@@ -37,7 +37,7 @@ float rightMotorDutyCicle, leftMotorDutyCicle;
 
 // PID Initialization
 double Setpoint, Input, Output;
-double Kp = 0.5, Ki = 0.1, Kd = 0.5;
+double Kp = 0.09, Ki = 0.01, Kd = 0.25;
 float pid_out_left, pid_out_right;
 
 PID myPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
@@ -333,8 +333,8 @@ void Actuators()
   {
     Setpoint = 0;
     float throttle = 50;
-    rightMotorDutyCicle = throttle - Output;
-    leftMotorDutyCicle = throttle + Output;
+    rightMotorDutyCicle = 1.02 * throttle - Output;
+    leftMotorDutyCicle = 0.98 * throttle + Output;
   }
   break;
 
@@ -362,8 +362,8 @@ void Actuators()
       FLIGHT_MODE = FM_DISABLED;
     }
     float throttle = 50;
-    rightMotorDutyCicle = throttle - Output;
-    leftMotorDutyCicle = throttle + Output;
+    rightMotorDutyCicle = 1.02 * throttle - Output;
+    leftMotorDutyCicle = 0.98 * throttle + Output;
   }
 
   case FM_TEST_MOTORS:
@@ -500,6 +500,8 @@ double unwrap(double previousAngle, double newAngle)
 
 void changeMotorSpeed(int leftDutyCicle, int rightDutyCicle)
 {
+  // rightDutyCicle *= 1.05;
+  // leftDutyCicle *= 0.95;
   if (leftDutyCicle > 100)
   {
     leftDutyCicle = 100;

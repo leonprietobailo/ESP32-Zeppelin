@@ -10,7 +10,7 @@
 #define SAMPLE_RATE = 100.0; // Hz
 uint64_t startGyro;
 
-// HMC5883 Initialization.
+// QMC5883 Initialization.
 QMC5883LCompass mag;
 
 // MPU6500 Initialization.
@@ -20,21 +20,28 @@ uint64_t executionTime;
 xyzFloat acc, vel, pos, g, gyro;
 
 // Define the GPIO pins for the PWM signals
-const int pwmPin1 = 0; // G0: Left
-const int pwmPin2 = 4; // G4: Right
+const int pwmPin1_CW = 0; // G0: Left
+const int pwmPin1_CCW = 4;
+
+const int pwmPin2_CW = 16; // G4: Right
+const int pwmPin2_CCW = 17;
 
 // Define PWM channel, frequency, and resolution
 const int pwmChannel1 = 0;
 const int pwmChannel2 = 1;
-const int freq = 1000;    // Frequency in Hz
+const int freq = 10000;   // Frequency in Hz
 const int resolution = 8; // Resolution in bits (8 bits -> 0-255 value range)
+
+// Define Duty Cicles for motor control.
+float rightMotorDutyCicle, leftMotorDutyCicle;
 
 // PID Initialization
 double Setpoint, Input, Output;
-double Kp = 1, Ki = 0.1, Kd = 0.05;
+double Kp = 0.5, Ki = 0.1, Kd = 0.5;
 float pid_out_left, pid_out_right;
 
 PID myPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
+int pidMin = -50, pidMax = 50;
 
 // WiFi connection.
 const char *ssid = "XTA.CAT-7E5AA4";
@@ -48,12 +55,14 @@ void Controllers();
 void Actuators();
 void Diagnostics();
 double unwrap(double previousAngle, double newAngle);
+void changeMotorSpeed(int leftDutyCicle, int rightDutyCicle);
+void resetIntegrator();
 
 enum FlightMode
 {
   FM_DISABLED,
-  FM_DEFAULT,
-  FM_DEAD_RECKONING,
+  FM_HOLD_HEADING,
+  FM_FLIGHTPLAN,
   FM_TEST_MOTORS
 };
 
@@ -77,6 +86,7 @@ int n = 0;
 xyzFloat g_avg;
 float vel_x, vel_y, vel_z, pos_x, pos_y, pos_z, roll, pitch;
 double yaw;
+u64_t flightplanStart;
 
 const FusionAhrsSettings settings = {
     .convention = FusionConventionNwu,
@@ -91,15 +101,24 @@ xyzFloat gyroReads;
 
 void setup()
 {
-  // PWMs
+  /** PWMs*/
+  // Grounded H-Bridge PINs
+  pinMode(pwmPin1_CCW, OUTPUT);
+  pinMode(pwmPin2_CCW, OUTPUT);
+  digitalWrite(pwmPin1_CCW, LOW);
+  digitalWrite(pwmPin2_CCW, LOW);
+
+  // PWM H-Bridge PINs
   ledcSetup(pwmChannel1, freq, resolution);
   ledcSetup(pwmChannel2, freq, resolution);
-  ledcAttachPin(pwmPin1, pwmChannel1);
-  ledcAttachPin(pwmPin2, pwmChannel2);
+  ledcAttachPin(pwmPin1_CW, pwmChannel1);
+  ledcAttachPin(pwmPin2_CW, pwmChannel2);
+  ledcWrite(pwmChannel1, 0);
+  ledcWrite(pwmChannel2, 0);
 
   // PIDs
   myPID.SetMode(AUTOMATIC);
-  myPID.SetOutputLimits(-60, 60);
+  myPID.SetOutputLimits(pidMin, pidMax);
   Setpoint = 0;
   Input = 0;
 
@@ -291,15 +310,13 @@ void ReadUnits()
 void Controllers()
 {
   Input = yaw;
-  Setpoint = 0;
   bool result = myPID.Compute();
 
   double outputCapped = Output / 3.0;
 
-  // Serial.printf("Input: %f    Setpoint: %f    Output: %f    Yaw: %f    Boolean: %d", Input, Setpoint, outputCapped, yaw, result);
-  // Serial.println();
+  Serial.printf("Input: %f    Setpoint: %f    Output: %f    Yaw: %f    Boolean: %d", Input, Setpoint, outputCapped, yaw, result);
+  Serial.println();
 }
-float rightMotor, leftMotor;
 
 void Actuators()
 {
@@ -307,46 +324,66 @@ void Actuators()
   {
   case FM_DISABLED:
   {
-    rightMotor = 0;
-    leftMotor = 0;
+    rightMotorDutyCicle = 0;
+    leftMotorDutyCicle = 0;
   }
   break;
 
-  case FM_DEFAULT:
+  case FM_HOLD_HEADING:
   {
-    float throttle = 10;
-    rightMotor = throttle + Output;
-    leftMotor = throttle - Output;
-    if (rightMotor < 0)
-    {
-      rightMotor = 0;
-    }
-    if (leftMotor < 0)
-    {
-      leftMotor = 0;
-    }
+    Setpoint = 0;
+    float throttle = 50;
+    rightMotorDutyCicle = throttle - Output;
+    leftMotorDutyCicle = throttle + Output;
   }
   break;
 
-  case FM_DEAD_RECKONING:
-    /* code */
-    break;
+  case FM_FLIGHTPLAN:
+  {
+    if (millis() - flightplanStart < 1500)
+    {
+      Setpoint = 0;
+    }
+    else if (millis() - flightplanStart < 3000)
+    {
+      Setpoint = 90;
+    }
+    else if (millis() - flightplanStart < 4500)
+    {
+      Setpoint = 180;
+    }
+    else if (millis() - flightplanStart < 6000)
+    {
+      Setpoint = 90;
+    }
+    else if (millis() - flightplanStart < 7500)
+    {
+      Setpoint = 0;
+      FLIGHT_MODE = FM_DISABLED;
+    }
+    float throttle = 50;
+    rightMotorDutyCicle = throttle - Output;
+    leftMotorDutyCicle = throttle + Output;
+  }
 
   case FM_TEST_MOTORS:
-    /* code */
-    break;
+  {
+    rightMotorDutyCicle = 100;
+    leftMotorDutyCicle = 100;
+  }
+  break;
 
   default:
     break;
   }
 
-  ledcWrite(pwmChannel1, leftMotor * 2.55);
-  ledcWrite(pwmChannel2, rightMotor * 2.55);
+  changeMotorSpeed(leftMotorDutyCicle, rightMotorDutyCicle);
 
-  Serial.printf("Left Motor: %f    Right Motor: %f Map1: %f Map2: %f", leftMotor, rightMotor, leftMotor / 2.55, rightMotor / 2.55);
+  // Serial.printf("Left Motor: %f    Right Motor: %f Map1: %f Map2: %f", leftMotor, rightMotor, leftMotor / 2.55, rightMotor / 2.55);
 
-  Serial.println();
+  // Serial.println();
 }
+
 void Diagnostics()
 {
   int x = mag.getX();
@@ -412,23 +449,23 @@ void TaskServer(void *pvParameters)
         }
         else if (request.indexOf("/CMD2") != -1)
         {
-          FLIGHT_MODE = FM_DEFAULT;
-          client.println("Switched to: \"FM_DEFAULT\"");
+          FLIGHT_MODE = FM_HOLD_HEADING;
+          client.println("Switched to: \"FM_HOLD_HEADING\"");
+          resetIntegrator();
         }
         else if (request.indexOf("/CMD3") != -1)
         {
-          ledcWrite(pwmChannel1, 255);
-          ledcWrite(pwmChannel2, 255);
-          client.println("<html><body><h1>Response for CMD3</h1></body></html>");
+          FLIGHT_MODE = FM_FLIGHTPLAN;
+          flightplanStart = millis();
+          client.println("Switched to: \"FM_FLIGHTPLAN\"");
         }
         else if (request.indexOf("/CMD4") != -1)
         {
-          Serial.println("Received CMD4");
-          client.println("<html><body><h1>Response for CMD4</h1></body></html>");
+          FLIGHT_MODE = FM_TEST_MOTORS;
+          client.println("Switched to: \"FM_TEST_MOTORS\"");
         }
         else if (request.indexOf("/CMD5") != -1)
         {
-          Serial.println("Received CMD5");
           client.printf("%0.1f,%0.1f,%0.1f", roll, pitch, yaw);
         }
         else
@@ -459,4 +496,35 @@ double unwrap(double previousAngle, double newAngle)
   else if (delta < -180)
     delta += 360;
   return previousAngle + delta;
+}
+
+void changeMotorSpeed(int leftDutyCicle, int rightDutyCicle)
+{
+  if (leftDutyCicle > 100)
+  {
+    leftDutyCicle = 100;
+  }
+  else if (leftDutyCicle < 0)
+  {
+    leftDutyCicle = 0;
+  }
+
+  if (rightDutyCicle > 100)
+  {
+    rightDutyCicle = 100;
+  }
+  else if (rightDutyCicle < 0)
+  {
+    rightDutyCicle = 0;
+  }
+
+  ledcWrite(pwmChannel1, rightDutyCicle);
+  ledcWrite(pwmChannel2, leftDutyCicle);
+}
+
+void resetIntegrator()
+{
+  myPID.SetOutputLimits(0.0, 1.0);       // Forces minimum up to 0.0
+  myPID.SetOutputLimits(-1.0, 0.0);      // Forces maximum down to 0.0
+  myPID.SetOutputLimits(pidMin, pidMax); // Set the limits back to normal
 }

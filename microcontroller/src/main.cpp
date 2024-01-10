@@ -314,7 +314,7 @@ void Controllers()
 
   double outputCapped = Output / 3.0;
 
-  Serial.printf("Input: %f    Setpoint: %f    Output: %f    Yaw: %f    Boolean: %d", Input, Setpoint, outputCapped, yaw, result);
+  Serial.printf("Input: %f    Setpoint: %f    Output: %f    Yaw: %f    Boolean: %d", Input, Setpoint, Output, yaw, result);
   Serial.println();
 }
 
@@ -340,27 +340,27 @@ void Actuators()
 
   case FM_FLIGHTPLAN:
   {
-    if (millis() - flightplanStart < 1500)
-    {
-      Setpoint = 0;
-    }
-    else if (millis() - flightplanStart < 3000)
+    if (millis() - flightplanStart < 5000)
     {
       Setpoint = 90;
     }
-    else if (millis() - flightplanStart < 4500)
-    {
-      Setpoint = 180;
-    }
-    else if (millis() - flightplanStart < 6000)
-    {
-      Setpoint = 90;
-    }
-    else if (millis() - flightplanStart < 7500)
-    {
-      Setpoint = 0;
-      FLIGHT_MODE = FM_DISABLED;
-    }
+    // else if (millis() - flightplanStart < 10000)
+    // {
+    //   Setpoint = 90;
+    // }
+    // else if (millis() - flightplanStart < 15000)
+    // {
+    //   Setpoint = 180;
+    // }
+    // else if (millis() - flightplanStart < 20000)
+    // {
+    //   Setpoint = 90;
+    // }
+    // else if (millis() - flightplanStart < 25000)
+    // {
+    //   Setpoint = 0;
+    //   FLIGHT_MODE = FM_DISABLED;
+    // }
     float throttle = 50;
     rightMotorDutyCicle = 1.02 * throttle - Output;
     leftMotorDutyCicle = 0.98 * throttle + Output;

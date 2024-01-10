@@ -37,15 +37,16 @@ float rightMotorDutyCicle, leftMotorDutyCicle;
 
 // PID Initialization
 double Setpoint, Input, Output;
-double Kp = 0.09, Ki = 0.01, Kd = 0.25;
+double Kp = 0.075, Ki = 0, Kd = 0.1; // Ki = 0.01, Kd = 0.25.
+// double Kp = 0.075, Ki = 0, Kd = 0.05; // Ki = 0.01, Kd = 0.25.
 float pid_out_left, pid_out_right;
 
 PID myPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
 int pidMin = -50, pidMax = 50;
 
 // WiFi connection.
-const char *ssid = "XTA.CAT-7E5AA4";
-const char *password = "ZqqKpgwn";
+const char *ssid = "Planta 1";
+const char *password = "KuDyTRkPx4hA";
 WiFiServer server(80);
 
 // Function declarations
@@ -87,6 +88,7 @@ xyzFloat g_avg;
 float vel_x, vel_y, vel_z, pos_x, pos_y, pos_z, roll, pitch;
 double yaw;
 u64_t flightplanStart;
+float throttle = 50, rightMotorThrottleCorrector = 0.97, leftMotorThrottleCorrector = 1.03;
 
 const FusionAhrsSettings settings = {
     .convention = FusionConventionNwu,
@@ -214,8 +216,7 @@ void loop()
   ReadUnits();
   Controllers();
   Actuators();
-  // Diagnostics();
-  // Serial.println(micros() - executionTime);
+
   if (micros() - executionTime > 1e4)
   {
     Serial.println("WARNING: Long loop. PIDs may get unstable. " + micros() - executionTime);
@@ -228,21 +229,15 @@ void loop()
 
 void ReadUnits()
 {
-  // HMC5883 READOUTS
+
   mag.read();
 
-  // MPU6500 READOUTS
-  // acc = myMPU6500.getCorrectedAccRawValues();
   xyzFloat g_read = myMPU6500.getGValues();
   g_avg += g_read;
   g.x = g.x * 0.95 + g_read.x * 0.05;
   g.y = g.y * 0.95 + g_read.y * 0.05;
   g.z = g.z * 0.95 + g_read.z * 0.05;
-  gyro = myMPU6500.getGyrValues(); // / 131 - gyroReads;
-
-  // Velocity
-  // vel += g * 9.81 * 4000e-6;
-  // pos += vel * 4000e-6;
+  gyro = myMPU6500.getGyrValues();
 
   const clock_t timestamp = clock();
   FusionVector gyroscope = {gyro.x, gyro.y, gyro.z};
@@ -262,49 +257,12 @@ void ReadUnits()
   const FusionEuler euler = FusionQuaternionToEuler(FusionAhrsGetQuaternion(&ahrs));
   const FusionVector earth = FusionAhrsGetEarthAcceleration(&ahrs);
 
-  // Serial.printf("Roll %0.1f, Pitch %0.1f, Yaw %0.1f, X %0.1f, Y %0.1f, Z %0.1f\n",
-  //               euler.angle.roll, euler.angle.pitch, euler.angle.yaw,
-  //               earth.axis.x, earth.axis.y, earth.axis.z);
   roll = euler.angle.roll;
   pitch = euler.angle.pitch;
   yaw = unwrap(yaw, euler.angle.yaw);
 
   vel_x += earth.axis.x * deltaTime;
   pos_x += vel_x * deltaTime + 0.5 * earth.axis.x * deltaTime * deltaTime;
-  // Serial.println(pos_x);
-
-  // if (n == 10)
-  // {
-  //   vel += g_avg * 9.81 * n * 4000e-6 / n;
-  //   pos += vel * 4000e-6 + g_avg * 9.81 * n * 4000e-6 * 0.5 * n * 4000e-6;
-  //   n = 0;
-  // }
-  // else
-  // {
-  //   n++;
-  // }
-
-  // Serial.print("gx: ");
-  // Serial.print(g.x);
-  // Serial.print("\t");
-
-  // Serial.print("gy: ");
-  // Serial.print(g.y);
-  // Serial.print("\t");
-
-  // Serial.print("gz: ");
-  // Serial.print(g.z);
-
-  // Serial.print("x: ");
-  // Serial.print(pos.x);
-  // Serial.print("\t");
-
-  // Serial.print("y: ");
-  // Serial.print(pos.y);
-  // Serial.print("\t");
-
-  // Serial.print("z: ");
-  // Serial.println(pos.z);
 }
 
 void Controllers()
@@ -330,41 +288,12 @@ void Actuators()
   break;
 
   case FM_HOLD_HEADING:
-  {
-    Setpoint = 0;
-    float throttle = 50;
-    rightMotorDutyCicle = 1.02 * throttle - Output;
-    leftMotorDutyCicle = 0.98 * throttle + Output;
-  }
-  break;
-
   case FM_FLIGHTPLAN:
   {
-    if (millis() - flightplanStart < 5000)
-    {
-      Setpoint = 90;
-    }
-    // else if (millis() - flightplanStart < 10000)
-    // {
-    //   Setpoint = 90;
-    // }
-    // else if (millis() - flightplanStart < 15000)
-    // {
-    //   Setpoint = 180;
-    // }
-    // else if (millis() - flightplanStart < 20000)
-    // {
-    //   Setpoint = 90;
-    // }
-    // else if (millis() - flightplanStart < 25000)
-    // {
-    //   Setpoint = 0;
-    //   FLIGHT_MODE = FM_DISABLED;
-    // }
-    float throttle = 50;
-    rightMotorDutyCicle = 1.02 * throttle - Output;
-    leftMotorDutyCicle = 0.98 * throttle + Output;
+    rightMotorDutyCicle = throttle * rightMotorThrottleCorrector + Output;
+    leftMotorDutyCicle = throttle * leftMotorThrottleCorrector - Output;
   }
+  break;
 
   case FM_TEST_MOTORS:
   {
@@ -378,10 +307,6 @@ void Actuators()
   }
 
   changeMotorSpeed(leftMotorDutyCicle, rightMotorDutyCicle);
-
-  // Serial.printf("Left Motor: %f    Right Motor: %f Map1: %f Map2: %f", leftMotor, rightMotor, leftMotor / 2.55, rightMotor / 2.55);
-
-  // Serial.println();
 }
 
 void Diagnostics()
@@ -450,19 +375,47 @@ void TaskServer(void *pvParameters)
         else if (request.indexOf("/CMD2") != -1)
         {
           FLIGHT_MODE = FM_HOLD_HEADING;
+          Setpoint = 0;
           client.println("Switched to: \"FM_HOLD_HEADING\"");
           resetIntegrator();
         }
         else if (request.indexOf("/CMD3") != -1)
         {
           FLIGHT_MODE = FM_FLIGHTPLAN;
-          flightplanStart = millis();
+          client.println("Starting flightplan...");
+          Setpoint = 15;
+          delay(1300);
+          Setpoint = 30;
+          delay(1300);
+          Setpoint = 60;
+          delay(1300);
+          Setpoint = 90;
+          delay(5000);
+          Setpoint = 120;
+          delay(1300);
+          Setpoint = 150;
+          delay(1300);
+          Setpoint = 180;
+          delay(5000);
+          Setpoint = 150;
+          delay(1300);
+          Setpoint = 120;
+          delay(1300);
+          Setpoint = 90;
+          delay(5000);
+          Setpoint = 60;
+          delay(1300);
+          Setpoint = 30;
+          delay(1300);
+          Setpoint = 0;
+          FLIGHT_MODE = FM_HOLD_HEADING;
+
           client.println("Switched to: \"FM_FLIGHTPLAN\"");
         }
         else if (request.indexOf("/CMD4") != -1)
         {
-          FLIGHT_MODE = FM_TEST_MOTORS;
-          client.println("Switched to: \"FM_TEST_MOTORS\"");
+          client.println("Callibrating IMU");
+          ESP.restart();
         }
         else if (request.indexOf("/CMD5") != -1)
         {
@@ -472,10 +425,8 @@ void TaskServer(void *pvParameters)
         {
           client.println("Unknown Command");
         }
+        client.println();
 
-        client.println(); // End of the response
-
-        // Flush and stop client after sending the response
         client.flush();
         client.stop();
         Serial.println("Client disconnected");
@@ -500,8 +451,6 @@ double unwrap(double previousAngle, double newAngle)
 
 void changeMotorSpeed(int leftDutyCicle, int rightDutyCicle)
 {
-  // rightDutyCicle *= 1.05;
-  // leftDutyCicle *= 0.95;
   if (leftDutyCicle > 100)
   {
     leftDutyCicle = 100;
@@ -520,8 +469,8 @@ void changeMotorSpeed(int leftDutyCicle, int rightDutyCicle)
     rightDutyCicle = 0;
   }
 
-  ledcWrite(pwmChannel1, rightDutyCicle);
-  ledcWrite(pwmChannel2, leftDutyCicle);
+  ledcWrite(pwmChannel1, leftDutyCicle);
+  ledcWrite(pwmChannel2, rightDutyCicle);
 }
 
 void resetIntegrator()

@@ -13,25 +13,26 @@ def send_command(cmd):
     except Exception as e:
         print(f"Error: {e}")
 
-esp_ip = '192.168.1.149'
+esp_ip = '192.168.1.179'
 user_choice = 5  # Changed variable name
 
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server_socket.bind(('0.0.0.0', 8080))
 server_socket.listen(1)
 
+print()
+print()
+
 while user_choice != 0:
-    print("*****************************")
-    print("Select command: ")
+    print("********* COMMANDS ********** ")
     print("1 - Stop Motors")
     print("2 - Heading Hold")
     print("3 - Start Flightplan")
-    print("4 - Do Command 4")
+    print("4 - Callibrate IMU")
     print("5 - logs")
-    print("0 - Exit.")
+    print("0 - EXIT")
     print("*****************************")
-    user_choice = int(input())  # Now it should work correctly
-    
+    user_choice = int(input("Selected Command: "))  # Now it should work correctly
     match user_choice:
         case 1:
             send_command("CMD1")
@@ -41,6 +42,8 @@ while user_choice != 0:
             send_command("CMD3")
         case 4:
             send_command("CMD4")
+            print("Please wait...")
+            time.sleep(10)
         case 5:
             while not keyboard.is_pressed('esc'):
                 result = send_command("CMD5");
@@ -50,5 +53,7 @@ while user_choice != 0:
 
         case 0:
             print("Exiting...")
+    print()
+    print()
 
 user_choice = 0
